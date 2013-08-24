@@ -10,11 +10,11 @@ System requirements
 
 Instalation
 ===
-1. `git clone git://github.com/sashasimkin/hook-receiver.py.git`
-2. `cd hook-reciever.py/`
-3. `virtualenv .env`
-4. `pip install -r requirements.txt`
-5. `chmod 0777 logs/`
+```bash
+git clone git://github.com/sashasimkin/hook-receiver.py.git
+cd hook-reciever.py/
+./build.sh
+```
 
 Usage
 ===
@@ -29,7 +29,7 @@ Single config is a python module, which must be placed in `config` package and c
 * `PATH` - Root path for project, shell commands has been executed here
 * `COMMANDS` - Array of shell commands, which will be performed after recieve hook. Default: `COMMANDS = []`
 * `REFS` - List of patterns payload.ref to match for repform actions, otherwise - nothing hapens. Default `REFS = ['.*']`
- 
+
 TODO
 ===
 * Pre-processing for COMMANDS
