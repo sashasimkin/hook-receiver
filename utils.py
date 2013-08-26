@@ -1,7 +1,8 @@
 import os
 import logging
 import logging.handlers
-from app import PATH
+
+PATH = os.path.abspath(os.path.dirname(__file__))
 
 
 def spawn_logger(cfg, logger_name):
