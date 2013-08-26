@@ -1,9 +1,11 @@
+#!/usr/bin/env python
 import os
 import re
 import json
-import logging
 from subprocess import Popen, PIPE
 from flask import Flask, request
+
+import utils
 
 PATH = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -16,61 +18,51 @@ def index():
 
 @app.route('/<cfg_name>', methods=['POST'])
 def receive(cfg_name):
-    def spawn_logger(cfg, logger_name):
-        """
-        Get logger instance for config_name and logger name
-        :param cfg: Current config name
-        :param logger_name: Logger name, now error and info
-        :return:
-        """
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-
-        handler = logging.handlers.RotatingFileHandler(
-            os.path.join(PATH, 'logs/%s.%s.log' % (cfg, logger_name)),
-            backupCount=5
-        )
-        handler.setFormatter(logging.Formatter(u'[%(asctime)s]  %(message)s'))
-        logger.addHandler(handler)
-
-        return logger
-
     # Init loggers
-    error_logger = spawn_logger(cfg_name, 'error')
-    info_logger = spawn_logger(cfg_name, 'info')
+    error_logger = utils.spawn_logger(cfg_name, 'error')
+    info_logger = utils.spawn_logger(cfg_name, 'info')
 
-    # Dictionary from request.data
-    data = json.loads(request.data)
+    # Dictionary from request.data, from json to native
+    payload = json.loads(request.data)
 
+    # For cases when exception raised before on_error defined from `config`
+    on_error = lambda *args: None
     try:
         cfg = getattr(__import__('config.%s' % cfg_name, globals(), locals(), level=-1), cfg_name)
-
-        def get_variable(name, default, condition, fail_message):
-            v = getattr(cfg, name, default)
-            if condition(v):
-                raise RuntimeError(fail_message)
-
-        path = get_variable('PATH',
-                            '',
-                            lambda p: not p or not os.path.exists(p),
-                            'PATH does not exists')
-        refs = get_variable('REFS',
-                            [r'.*'],
-                            lambda r: not isinstance(r, list),
-                            'REFS must be a list')
-        commands = get_variable('COMMANDS',
-                                [],
-                                lambda c: not isinstance(c, list),
-                                'Define COMMANDS variable, else nothing happens')
+        # Hooks
+        ref_not_fit = getattr(cfg, 'ref_not_fit', lambda *args: None)
+        on_command = getattr(cfg, 'on_command', lambda *args: None)
+        on_error = getattr(cfg, 'on_error', lambda *args: None)
+        # Config variables
+        path = utils.get_variable(cfg,
+                                  'PATH',
+                                  '',
+                                  lambda p: not p or not os.path.exists(p),
+                                  'PATH does not exists')
+        refs = utils.get_variable(cfg,
+                                  'REFS',
+                                  [r'.*'],
+                                  lambda r: not isinstance(r, list),
+                                  'REFS must be a list')
+        commands = utils.get_variable(cfg,
+                                      'COMMANDS',
+                                      [],
+                                      lambda c: not isinstance(c, list),
+                                      'Define COMMANDS variable, else nothing happens')
 
         for ref in refs:
             refExpr = re.compile(ref, re.IGNORECASE)
-            if refExpr.match(data['ref']) is None:
+            if refExpr.match(payload['ref']) is None:
                 # Log message about ref does not feet and exit
+                ref_not_fit(ref, payload)
                 info_logger.info('Ref does not fit')
                 return ''
 
         for command in commands:
+            # Variables from payload, access as repository[name]
+            command.format(**payload)
+
+            on_command(command, payload)
             # Execute current command and log out and errors
             out, err = Popen(command,
                              shell=True,
@@ -79,14 +71,22 @@ def receive(cfg_name):
                              stdout=PIPE,
                              stderr=PIPE).communicate()
             if out:
-                info_logger.info(out.encode('utf8'))
+                try:
+                    info_logger.info(out.encode('utf8'))
+                except UnicodeDecodeError:
+                    pass
             if err:
-                error_logger.error(err.encode('utf8'))
+                try:
+                    error_logger.error(err.encode('utf8'))
+                except UnicodeDecodeError:
+                    pass
 
     except Exception, e:
+        on_error(e, payload)
         error_logger.error(str(e))
 
     return ''
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True)
